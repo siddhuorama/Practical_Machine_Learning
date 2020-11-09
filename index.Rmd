@@ -1,0 +1,712 @@
+---
+title: "Lifting Weights - Right And Wrong"
+author: "Siddharth Samant"
+date: "09/11/2020"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github 
+    keep_md: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+============================================================
+============================================================
+
+## Synopsis
+
+The objective of this assignment was to correctly classify the quality of a physical activity - performing barbell lifts - into one of 5 classes (A/B/C/D/E). We initially pre-processed the training set - this involved dealing with missing values, feature selection, data transformations to resolve skewness, and removal of highly correlated predictors. We then fit a range of machine learning models on one half of the training set, and validated their performance on the other half. We also fit two model ensembles which combined the best standalone models - one based on majority vote, and the other on maximum class probabilities. The majority vote model ensemble gave us the best performance, so we selected it as our final model. We then pre-processed the test set, fit our model to its 20 cases, and visualised the final predictions.
+
+============================================================
+============================================================
+
+## Data Collection & Feature Characteristics
+
+A detailed synopsis of the data collection process is provided in the research paper [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf). We noted the following:
+
+1. **Sensors were mounted in users' glove, armband, lumbar belt, and dumbbell**
+2. For data recording, the researchers used Razor inertial measurement units (IMU), which provided **3-axes acceleration, gyroscope and magnetometer data**
+3. 6 Participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+   * exactly according to the specification (Class A) 
+   * throwing the elbows to the front (Class B) 
+   * lifting the dumbbell only halfway (Class C)
+   * lowering the dumbbell only halfway (Class D)
+   * throwing the hips to the front (Class E)
+4. Class A corresponded to the specified execution of the exercise, while the other 4 classes corresponded to common mistakes
+5. **For feature extraction, the researchers used a sliding window approach with different lengths from 0.5 second to 2.5 seconds**, with 0.5 second overlap
+6. In each step of the sliding window approach, **they calculated features on the Euler angles - roll, pitch and yaw - as well as the raw accelerometer, gyroscope and magnetometer readings**
+7. For the Euler angles of each of the four sensors, they calculated eight features: **mean, variance, standard deviation, max, min, amplitude, kurtosis and skewness**, generating in total 96 derived feature sets
+
+
+============================================================
+============================================================
+
+## Data Preprocessing
+
+### 1. Loading Important Packages
+
+We loaded in the `tidyverse` set of packages for more efficient coding. We also loaded in the `caret` package because of its library of extensive modeling tools.   
+
+```{r packages}
+####install packages (ex. install.packages("caret")) if using for the first time 
+library(tidyverse)
+library(caret)
+```
+
+***
+
+### 2. Reading In The Dataset
+
+We read in and explored the training dataset. It had `19622` rows and `160` variables, which could be categorised as follows:
+
+1. The `user_name` variable listed which of the 6 participants performed the physical activity
+2. There were 3 variables -  `raw_timestamp_part_1`, `raw_timestamp_part_2` and ``cvtd_timestamp`` - which informed us when the activity was performed
+3. The `new_window` variable informed us whether a new sliding window was started at a particular observation. The `num_window` variable counted the total windows - there were a total of 846 
+4. Columns `8` to `159` contained the measurement variables - from `row_belt` to `magnet_forearm_z`
+5. The final column `classe` contained the response - it listed the classes of the observations
+
+```{r download1}
+#Download the training set, and then read it in
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+              destfile = "pml_training.csv")
+
+trainingWeights <- read_csv("pml_training.csv", na = c("#DIV/0!", "NA"))
+```
+
+***
+
+### 3. Dealing with Missing Values
+
+We conducted an analysis of variable-wise missing values. Out of the 160 variables in the dataset:
+
+* 60 variables had no missing values
+* 94 variables had 19,216-19,301 missing values; i.e., close to 98% observations had missing values
+* For 6 variables, all observations were missing
+* Missing values seemed to be well distributed among the 5 response classes
+* Most of the variables with missing values were those calculating the summary measurements - skewness, kurtosis, maximum, minimum, average, variance, amplitude, and standard deviation
+
+This left us with 3 possible courses of action:
+
+1. **Create a new set with only 60 variables**
+2. **Remove all observations with a majority of missing values**
+3. **Impute missing values**
+
+In the end, **we decided to create a new dataset with only the 60 non-missing-values predictors**. Our rationale was:
+
+* The summary variables were encoding information that was already present in the other variables - removing the former would hopefully not impact our model's ability to correctly predict the response
+* Removing the missing-value variables would allow us to use all the 19622 observations, and consequently fit a model that had enough samples to model the true relationship between the predictors and the response 
+
+
+```{r missing_values1}
+#finding variable-wise missing values in trainingWeights
+nonNA <- data.frame(x = apply(trainingWeights, 2, function(x) 
+        sum(!is.na(x))))
+nonNA$variable <- row.names(nonNA)
+row.names(nonNA) <- 1:160
+
+
+#removing rows indicating missing-value-predictors from nonNA
+nonNA <- nonNA[nonNA$x == nrow(trainingWeights),] 
+
+#creating trainingWeightsNew with only non-missing-value predictors
+mainVar <- names(trainingWeights) %in% unique(nonNA$variable)
+trainingWeightsNew <- trainingWeights %>%
+        select(names(trainingWeights)[mainVar])
+```
+
+***
+
+### 4. Data Streamlining
+
+We streamlined the data further as follows:
+
+1. We removed *near zero variance* predictors, which can have a disproportionate impact on some models
+2. We removed the auto-generated row-number variable `X1`, the time-stamp variables, and the window variables - based on a cursory look at the distribution of these variables, we did not believe that they would be linked with the response
+3. We encoded `user_name` and the response variable `classe` as factors
+4. We decomposed the `user_name` predictor as a set of binary dummy variables, so that it would work better with tree-based models in particular
+
+```{r streamlining1}
+#near zero variables search
+nzv <- nearZeroVar(trainingWeightsNew)
+trainingWeightsNew <- trainingWeightsNew[,-nzv]
+
+#removing irrelevant predictors
+trainingWeightsNew$raw_timestamp_part_1 <- NULL
+trainingWeightsNew$raw_timestamp_part_2 <- NULL
+trainingWeightsNew$cvtd_timestamp <- NULL
+trainingWeightsNew$X1 <- NULL
+trainingWeightsNew$num_window <- NULL
+
+#converting categorical variables to factors
+trainingWeightsNew$user_name <- as.factor(trainingWeightsNew$user_name)
+trainingWeightsNew$classe <- as.factor(trainingWeightsNew$classe)
+
+###creating new dataset trDummyUsers with dummy predictors for each user
+trDummyUsers <- trainingWeightsNew %>%
+        mutate(adelmo = ifelse(user_name == "adelmo", 1, 0),
+               carlitos = ifelse(user_name == "carlitos", 1, 0),
+               charles = ifelse(user_name == "charles", 1, 0),
+               eurico = ifelse(user_name == "eurico", 1, 0),
+               jeremy = ifelse(user_name == "jeremy", 1, 0),
+               pedro = ifelse(user_name == "pedro", 1, 0)) %>%
+        select(roll_belt:magnet_forearm_z, adelmo:pedro, classe)
+```
+
+***
+
+### 5. Reducing Skewness
+
+Skewed variables may reduce the efficacy of certain models. We used the `skewness` function in the `e1071` package to compute the skewness of each variable, and to display the variables with the highest absolute skewness. We also loaded the `kableExtra` package for its table formatting options.
+
+```{r skewness1A}
+#load the e1071 package
+library(e1071)
+library(kableExtra)
+
+#compute skewness for each variable (exclude dummy variables and the response)
+sk <- data.frame(skewness = apply(trDummyUsers[,-53:-59], 2, skewness))
+
+#display the variables with the highest possible skewness
+sk <- sk %>%
+        mutate(variable = row.names(sk)) %>%
+        select(variable, skewness) %>%
+        arrange(desc(abs(skewness)))
+row.names(sk) <- NULL
+knitr::kable(
+        sk %>% head(),
+        align = "cc"
+        ) %>%
+        kable_styling(full_width = TRUE)
+```
+
+Skewness values greater than 1 or smaller than -1 indicate a skewed variable. The above table indicated that 5 variables in particular were highly skewed (`gyros_dumbbell_z`, `gyros_dumbbell_x`, `gyros_forearm_z`, `gyros_forearm_y`, and `gyros_dumbbell_y`).
+
+Further investigation lead us to the conclusion that this high skewness was the result of only 1 observation in the dataset. We removed this observation and recomputed the skewness measure.
+
+```{r skewness1B}
+#remove the high outlier observation from trDummyUsers
+attach(trDummyUsers)
+trDummyUsers1 <- trDummyUsers[gyros_dumbbell_z != range(gyros_dumbbell_z)[2],]
+
+#compute skewness for each variable
+sk1 <- data.frame(skewness = apply(trDummyUsers1[,-53:-59], 2, skewness))
+
+#display the variables with the highest possible skewness
+sk1 <- sk1 %>%
+        mutate(variable = row.names(sk1)) %>%
+        select(variable, skewness) %>%
+        arrange(desc(abs(skewness)))
+row.names(sk1) <- NULL
+knitr::kable(
+        sk1 %>% head(),
+        align = "cc"
+        ) %>%
+        kable_styling(full_width = TRUE)
+```
+
+The skewness values improved substantially, which indicated the outsize impact of that one outlier observation. We illustrate this below by showing the distribution of one of the highly skewed variables before and after removing the outlier.  
+
+```{r skewness1C, fig.align= "center"}
+#histogram plot for gyros_forearm_y variable before outlier removal
+x1 <- ggplot(trDummyUsers, aes(gyros_forearm_y)) +
+        geom_histogram(binwidth = 1, fill = "black") +
+        xlab("gyros_forearm_y - all observations") +
+        ylab("Count")
+
+#histogram plot for gyros_forearm_y variable before outlier removal
+x2 <- ggplot(trDummyUsers1, aes(gyros_forearm_y)) +
+        geom_histogram(binwidth = 1, fill = "black") +
+        xlab("gyros_forearm_y - outlier removed") +
+        ylab("Count")
+
+#display the histogram plots side-by-side
+gridExtra::grid.arrange(x1, x2, ncol = 2)
+```
+
+***
+
+### 6. Removing Highly Correlated Predictors
+
+We started off by constructing the correlation matrix between each pair of predictors (apart from the dummy variables). We then used the `corrplot` package to visualise the correlation plot, ordering the variables using hierarchical clustering, so that highly correlated variables are placed next to one another. As we can see, there were high absolute correlations between many variables. 
+
+```{r correlations1A, fig.align="center"}
+#computing correlation between each pair of variables
+correlations <- cor(trDummyUsers1[,-53:-59])
+
+#load the corrplot library and display the correlation plot
+library(corrplot)
+corrplot(correlations, order = "hclust", tl.cex = 0.65, tl.col = "black")
+```
+
+Next, we removed predictors with an absolute correlation over 0.75 from the dataset, in order to improve model performance. The `findCorrelation` function removes one of each pair of highly correlated predictors.  
+
+```{r correlations1B}
+#removing high correlated variables from the dataset
+high <- findCorrelation(correlations, cutoff = 0.75, exact = TRUE)
+trDummyUsers2 <- trDummyUsers1[,-high]
+```
+
+Our final dataset contained `r dim(trDummyUsers2)[1]` observations and `r dim(trDummyUsers2)[2]` variables (including the response).
+
+============================================================
+============================================================
+
+## Model Selection
+
+### 1. Training & Validation Sets
+
+Our strategy for selecting the best model was informed both by the desire to capture the true fit, and computing constraints:
+        
+1. 50% of the dataset was used as a training set
+2. The training set was centered and scaled before fitting each model
+3. Each model was tuned over 10 different values of its tuning parameters
+4. We used 10-fold cross validation as our resampling technique. This was because it balanced both model bias and variance (especially considering the large sample size), and because it was computationally efficient
+5. Each model was then assessed for its accuracy on the validation set, which contained the remaining 50% of the dataset
+
+```{r train_val, cache = TRUE}
+#partition the data basis the response
+halfTrain <- createDataPartition(y = trDummyUsers2$classe, p = 0.5, 
+                                 list = FALSE)
+
+#create the training and validation sets
+trTrain50 <- trDummyUsers2[halfTrain,]
+trVal50 <- trDummyUsers2[-halfTrain,]
+
+```
+
+***
+
+### 2. Shortlisted Models
+
+We decided to use a mix of parametric and non-parametric model techniques so that we could select the best possible model:
+        
+1. Linear Discriminant Analysis (LDA)
+2. Quadratic Discriminant Analysis (QDA)
+3. Penalised LDA
+4. Classification Tree
+5. Bagging
+6. Support Vector Machine (SVM)
+7. Naive Bayes
+8. K Nearest Neighbours (KNN)
+9. Random Forest
+10. Boosting
+
+In the next few sections, we fit only the 3 models that returned the highest validation set accuracy - **Random Forest, Bagging & K Nearest Neighbour** - and 2 other parametric models - **Linear Discriminant Analysis & Naive Bayes**. This was done for the purposes of computational efficiency.
+
+***
+
+### 3. Linear Discriminant Analysis (LDA)
+
+LDA is a parametric modeling technique that uses maximum likelihood to predict the response class.
+
+```{r lda, cache = TRUE}
+#set seed and train best LDA model
+set.seed(100)
+ldaFit <- train(x = trTrain50[,-41], y = trTrain50$classe, 
+                method = "lda",
+                preProcess = c("center","scale"),
+                tuneLength = 10,
+                trControl = trainControl(method = "cv",
+                                         allowParallel = TRUE))
+
+#predict the response on the validation set
+ldaPredVal <- predict(ldaFit, trVal50)
+
+#confusion matrix - actual vs. predicted response
+ConfusionMatrix_LDA <- list(Table = confusionMatrix(ldaPredVal, trVal50$classe)$table,
+     Accuracy = round(confusionMatrix(ldaPredVal, 
+                           trVal50$classe)$overall[c(1,3,4,6)],3))
+ConfusionMatrix_LDA 
+```
+
+LDA provided an overall classification accuracy of only **`r round( confusionMatrix(ldaPredVal, trVal50$classe)$overall[1],3)`** on the validation set.
+
+***
+
+### 4. Bagged Trees
+
+Bagging aggregates the results of many bootstrapped trees, and predicts the response class by majority vote.
+
+```{r bag, cache = TRUE}
+#set seed and train best LDA model
+set.seed(100)
+bagFit <- train(x = trTrain50[,-41], y = trTrain50$classe, 
+                method = "treebag",
+                preProcess = c("center","scale"),
+                tuneLength = 10,
+                trControl = trainControl(method = "cv",
+                                         allowParallel = TRUE))
+
+#predict the response on the validation set
+bagPredVal <- predict(bagFit, trVal50)
+
+#confusion matrix - actual vs. predicted response
+ConfusionMatrix_Bagging <- list(Table = confusionMatrix(bagPredVal, trVal50$classe)$table,
+     Accuracy = round(confusionMatrix(bagPredVal, 
+                           trVal50$classe)$overall[c(1,3,4,6)],3))
+ConfusionMatrix_Bagging
+```
+
+Bagging provided a high classification accuracy of **`r round( confusionMatrix(bagPredVal, trVal50$classe)$overall[1],3)`** on the validation set.
+
+***
+
+### 5. Naive Bayes
+
+Naive Bayes is a parametric modeling technique that uses Bayes' Rule to predict the response class. It assumes that predictors are independent pf each other.
+
+```{r nb, cache = TRUE}
+#set seed and train best nb model
+set.seed(100)
+nbFit <- train(x = trTrain50[,-41], y = trTrain50$classe, 
+                method = "naive_bayes",
+                preProcess = c("center","scale"),
+                tuneLength = 10,
+                trControl = trainControl(method = "cv",
+                                         allowParallel = TRUE))
+
+#predict the response on the validation set
+nbPredVal <- predict(nbFit, trVal50)
+
+#confusion matrix - actual vs. predicted response
+ConfusionMatrix_NB <- list(Table = confusionMatrix(nbPredVal, trVal50$classe)$table,
+     Accuracy = round(confusionMatrix(nbPredVal, 
+                           trVal50$classe)$overall[c(1,3,4,6)],3))
+ConfusionMatrix_NB
+```
+
+Naive Bayes provided an overall classification accuracy of only **`r round( confusionMatrix(nbPredVal, trVal50$classe)$overall[1],3)`** on the validation set.
+
+***
+
+### 6. Random Forest
+
+Random Forest is similar to Bagging, except that only a subset of the predictors are considered at each split of the decision trees. We reduced the cross-validation folds to 5 for computational reasons.
+
+```{r rf, cache = TRUE}
+#set seed and train best rf model
+set.seed(100)
+rfFit <- train(x = trTrain50[,-41], y = trTrain50$classe, 
+                method = "rf",
+                preProcess = c("center","scale"),
+                tuneLength = 10,
+                trControl = trainControl(method = "cv",
+                                         number = 5,
+                                         allowParallel = TRUE))
+
+#predict the response on the validation set
+rfPredVal <- predict(rfFit, trVal50)
+
+#confusion matrix - actual vs. predicted response
+ConfusionMatrix_RF <- list(Table = confusionMatrix(rfPredVal, trVal50$classe)$table,
+     Accuracy = round(confusionMatrix(rfPredVal, 
+                           trVal50$classe)$overall[c(1,3,4,6)],3))
+ConfusionMatrix_RF
+```
+
+Random Forest provided a high classification accuracy of  **`r round( confusionMatrix(rfPredVal, trVal50$classe)$overall[1],3)`** on the validation set.
+
+***
+
+### 7. K Nearest Neighbours (KNN)
+
+KNN is a non-parametric modeling technique that classifies an observation based on the response of the "k" observations closest to it. 
+
+```{r knn, cache=TRUE}
+#set seed and train best knn model
+set.seed(100)
+knnFit <- train(x = trTrain50[,-41], y = trTrain50$classe, 
+                method = "knn",
+                preProcess = c("center","scale"),
+                tuneGrid = data.frame(.k = seq(1, 50, by = 5)),
+                trControl = trainControl(method = "cv",
+                                         allowParallel = TRUE))
+
+#predict the response on the validation set
+knnPredVal <- predict(knnFit, trVal50)
+
+#confusion matrix - actual vs. predicted response
+ConfusionMatrix_KNN <- list(Table = confusionMatrix(knnPredVal, trVal50$classe)$table,
+     Accuracy = round(confusionMatrix(knnPredVal, 
+                           trVal50$classe)$overall[c(1,3,4,6)],3))
+ConfusionMatrix_KNN
+```
+
+KNN provided a high classification accuracy of  **`r round( confusionMatrix(knnPredVal, trVal50$classe)$overall[1],3)`** on the validation set.
+
+The following plot shows the comparison of the 5 models, in terms of their accuracy. **Random Forest, K Nearest Neighbours and Bagging all had high accuracy**, while Linear Discriminant Analysis and Naive Bayes were much less accurate.
+
+```{r comparison1, fig.align="center"}
+
+#save the prediction accuracy of each model as new objects
+ldaCM <- round(confusionMatrix(ldaPredVal, trVal50$classe)$overall[c(1,3,4)],4)
+bagCM <- round(confusionMatrix(bagPredVal, trVal50$classe)$overall[c(1,3,4)],4)
+nbCM <- round(confusionMatrix(nbPredVal, trVal50$classe)$overall[c(1,3,4)],4)
+rfCM <- round(confusionMatrix(rfPredVal, trVal50$classe)$overall[c(1,3,4)],4)
+knnCM <- round(confusionMatrix(knnPredVal, trVal50$classe)$overall[c(1,3,4)],4)
+
+#create a dataframe that stores the accuracy & confidence intervals of all 5 models 
+finalCM <- data.frame(rbind(ldaCM, bagCM, nbCM, rfCM, knnCM)) %>%
+        mutate(Model = c("Linear Discriminant Analysis", "Bagged Tree",
+                         "Naive Bayes", "Random Forest", "K Nearest Neighbours"),
+               CILower = AccuracyLower,
+               CIUpper = AccuracyUpper) %>%
+        select(Model, Accuracy, CILower, CIUpper) %>%
+        arrange(Model)
+row.names(finalCM) <- NULL
+
+#visualise the prediction accuracy of all 5 models
+ggplot(finalCM, aes(Accuracy, Model)) +
+        geom_segment(aes(yend = Model), xend = 0, colour = "grey50") +
+        geom_point(size = 3, colour = "red") +
+        theme(panel.grid.major.y = element_blank()) +
+        theme(axis.text.x = element_text(angle=30, hjust=1, vjust=1)) +
+        xlim(0.1,1) +
+        coord_flip() +
+        labs(title = "Prediction Accuracy of 5 Standalone Models",
+             subtitle = "Random Forest, Bagging & KNN all have high Accuracy", 
+             y = "Model",
+             x = "Prediction Accuracy")
+```
+
+***
+
+### 8. Majority Vote Ensemble Model
+
+**Random Forest, Bagging and K Nearest Neighbours all returned very high prediction accuracy on the validation set**. Instead of choosing one model, we first explored the performance of a model which combined the predictions of these 3 models and returned the majority vote.
+
+```{r ensemble}
+#create a data frame that combines the predictions of the 3 best models
+predDF <- data.frame(rfPredVal, bagPredVal, knnPredVal)
+
+#add a factor variable that contains the majority vote of the 3 model predictions
+majority = apply(predDF, 1, function(x) names(which.max(table(x))))
+predDF$majority  <- as.factor(majority)
+
+#confusion matrix - actual vs. predicted response
+ConfusionMatrix_MVE <- list(Table = confusionMatrix(predDF$majority, trVal50$classe)$table,
+     Accuracy = round(confusionMatrix(predDF$majority, 
+                           trVal50$classe)$overall[c(1,3,4,6)],3))
+ConfusionMatrix_MVE
+```
+
+The model had an accuracy of **`r round(confusionMatrix(predDF$majority, trVal50$classe)$overall[1],3)`** when tested on the validation set.
+
+***
+
+### 9. Maximum Class Probability Model
+
+We explored one final model - a Maximum Class Probability Model. Higher maximum class probability indicates a higher confidence in selecting a response class for a particular observation. We compared the probabilities of the selected classes for the Random Forest and Bagged Tree models, and selected the class that corresponded to the highest probability. (K Nearest Neighbours was not considered, since it only returns probabilities of 0 and 1.) 
+
+```{r class_probability}
+#predict the class probabilities for the Random Forest model
+rfPredProb <- predict(rfFit, trVal50, type = "prob")
+#create a variable that records the maximum class probability
+rfPredProb$rfMaxProb <- apply(rfPredProb, 1, max)
+
+#predict the class probabilities for the Bagged Tree model
+bagPredProb <- predict(bagFit, trVal50, type = "prob")
+#create a variable that records the maximum class probability
+bagPredProb$bagMaxProb <- apply(bagPredProb, 1, max)
+
+#create a data frame that records both the class probabilities and class predictions
+predDFProb <- data.frame(rfClass = rfPredVal, 
+                         bagClass = bagPredVal, 
+                         rfProb = rfPredProb$rfMaxProb, 
+                         bagProb = bagPredProb$bagMaxProb)
+
+#create a factor variable that records the prediction corresponding to the highest class probability
+predDFProb <- predDFProb %>%
+        mutate(class = ifelse(rfProb >= bagProb, rfClass, bagClass)) %>%
+        mutate(class = as.factor(ifelse(class == 1, "A", 
+                              ifelse(class == 2, "B",
+                                     ifelse(class == 3, "C", 
+                                            ifelse(class == 4, 
+                                                   "D", "E"))))))
+
+#confusion matrix - actual vs. predicted response
+ConfusionMatrix_MCP <- list(Table = confusionMatrix(predDFProb$class, trVal50$classe)$table,
+     Accuracy = round(confusionMatrix(predDFProb$class, 
+                           trVal50$classe)$overall[c(1,3,4,6)],3))
+ConfusionMatrix_MCP
+```
+
+The model had an accuracy of **`r round(confusionMatrix(predDFProb$class, trVal50$classe)$overall[1],3)`** when tested on the validation set.
+
+***
+
+### 10. Final Model Selection
+
+We now had 5 shortlisted models - **Bagged Trees, Random Forest, K Nearest Neighbours, Majority Vote Ensemble, and Maximum Class Probability**.
+
+We visualised the prediction accuracy and confidence intervals of the 5 shortlisted models in order to select the final model. 
+
+
+```{r visual_comp, fig.align="center"}
+#save the prediction accuracy of the new models
+mveCM <- round(confusionMatrix(predDF$majority, trVal50$classe)$overall[c(1,3,4)],4)
+mcpCM <- round(confusionMatrix(predDFProb$class, trVal50$classe)$overall[c(1,3,4)],4)
+
+#create a data frame containing accuracy and confidence intervals of the 5 shortlisted models
+newFinalCM <- data.frame(rbind(knnCM, bagCM, rfCM, mveCM, mcpCM)) %>%
+        mutate(Model = c("K Nearest Neighbours", "Bagged Tree",
+                         "Random Forest", "Majority Vote Ensemble", 
+                         "Maximum Class Probability"),
+               CILower = AccuracyLower,
+               CIUpper = AccuracyUpper) %>%
+        select(Model, Accuracy, CILower, CIUpper) %>%
+        arrange(Model)
+row.names(newFinalCM) <- NULL
+
+#visualise the accuracy and confidence intervals of the 5 models
+ggplot(newFinalCM, aes(Model, Accuracy)) +
+        geom_segment(aes(xend = Model), yend = 0, linetype = "dashed") +
+        annotate("segment", y = newFinalCM$CILower[1:5],
+                 yend = newFinalCM$CIUpper[1:5],
+                 x = 1:5, xend = 1:5,
+                 arrow=arrow(ends="both", angle=90, 
+                             length=unit(.2,"cm"))) +
+        geom_point(size = 3, colour = "red") +
+        ylim(0.95,1) +
+        coord_flip() +
+        labs(title = "Prediction Accuracy of 5 Shortlisted Models",
+             subtitle = "Majority Vote Ensemble slightly outperforms Random Forest", 
+             y = "Prediction Accuracy with Confidence Intervals",
+             x = "Model")
+```
+
+**The highest prediction accuracy is by Random Forest and Majority Vote Ensemble.** We decided to choose the Majority Vote Ensemble: as the combination of 3 very accurate models, it was a safer bet. 
+
+> We selected the **Majority Vote Ensemble** as our final model.
+
+============================================================
+============================================================
+
+## Test Set Predictions
+
+### 1. Test Set Preprocessing
+
+We processed the test set the same way we processed the training set.
+
+**A. Reading In The Test Set:**
+
+```{r download2}
+#Download the training set, and then read it in
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              destfile = "pml_testing.csv")
+
+testWeights <- read_csv("pml_testing.csv", na = c("#DIV/0!", "NA"))
+```
+
+The test set had `r dim(testWeights)[1]` rows and `r dim(testWeights)[2]` columns. A quick check informed us that all variable names were common with the training set, except for the last variable. In the training set, that was the response variable, `classe`, while in the test set, it was `problem_id`.  
+
+**B. Removing Variables With Missing Values In The Training Set:**
+
+Next, we removed all the variables in the test set which had missing values in the training set.
+
+```{r missing_values2}
+#creating testWeightsNew with only non-missing-value predictors
+testWeightsNew <- testWeights %>%
+        select(names(testWeights)[mainVar])
+```
+
+The test set now has `r dim(testWeightsNew)[1]` observations and `r dim(testWeightsNew)[2]` variables.
+
+**C. Data Streamlining:**
+
+We removed those variables from the test set that had near zero variance in the training set. Then, we removed the time-stamp and window predictors which we had also removed from the training set, before rearranging the test set variables to match the training set. 
+
+```{r streamlining2}
+#removing near zero variables
+testWeightsNew <- testWeightsNew[,-nzv]
+
+#removing irrelevant predictors
+testWeightsNew$raw_timestamp_part_1 <- NULL
+testWeightsNew$raw_timestamp_part_2 <- NULL
+testWeightsNew$cvtd_timestamp <- NULL
+testWeightsNew$X1 <- NULL
+testWeightsNew$num_window <- NULL
+
+#converting categorical variables to factors
+testWeightsNew$user_name <- as.factor(testWeightsNew$user_name)
+
+###creating new dataset testDummyUsers with dummy predictors for each user
+testDummyUsers <- testWeightsNew %>%
+        mutate(adelmo = ifelse(user_name == "adelmo", 1, 0),
+               carlitos = ifelse(user_name == "carlitos", 1, 0),
+               charles = ifelse(user_name == "charles", 1, 0),
+               eurico = ifelse(user_name == "eurico", 1, 0),
+               jeremy = ifelse(user_name == "jeremy", 1, 0),
+               pedro = ifelse(user_name == "pedro", 1, 0)) %>%
+        select(roll_belt:magnet_forearm_z, adelmo:pedro, problem_id)
+```
+
+**D. Removing highly correlated variables:**
+
+Finally, we removed those variables from the test set that were highly correlated in the training set.
+
+```{r correlations2A}
+#removing high correlated variables from the dataset
+testDummyUsers1 <- testDummyUsers[,-high]
+```
+
+Our final set had `r dim(testDummyUsers1)[1]` observations, and `r dim(testDummyUsers1)[2]` variables.
+
+Just to be fully sure that our test set predictors were the same as our training set predictors, we checked the total of different variable names. 
+
+```{r correlations2B}
+#checking if any of the test and training set predictor names are different
+sum(names(trDummyUsers2[,-41]) != names(testDummyUsers1[,-41]))
+```
+
+The total was `r sum(names(trDummyUsers2[,-41]) != names(testDummyUsers1[,-41]))`, which confirmed that the training and test set predictor names were exactly the same.
+
+***
+
+### 2. Test Set Prediction
+
+We now predicted the response in the test set using our 3-model ensemble.
+
+```{r final_predict}
+#predict the test set response using Random Forest, K Nearest Neighbours, and Bagging
+rfPredTest <- predict(rfFit, testDummyUsers1)
+bagPredTest <- predict(bagFit, testDummyUsers1)
+knnPredTest <- predict(knnFit, testDummyUsers1)
+
+#combine the 3 model predictions and determine the majority vote
+#create a data frame that combines the predictions of the 3 best models
+predDFTest <- data.frame(rfPredTest, bagPredTest, knnPredTest)
+
+#add a factor variable that contains the majority vote of the 3 model predictions
+majority = apply(predDFTest, 1, function(x) names(which.max(table(x))))
+predDFTest$majority  <- as.factor(majority)
+```
+
+Finally, we visualised the final class predictions for the test set.
+
+```{r final_visualisation, fig.align="center"}
+#visualise the final class predictions for the test set
+ggplot(predDFTest, aes(majority)) +
+        geom_bar(colour = "black", fill = "salmon") +
+        labs(title = "Final Class Predictions for Test Set",
+             subtitle = "Class B & A make up 75% of predictions", 
+             x = "Class Prediction",
+             y = "Count")
+```
+
+Classes A & B accounted for 15 of the 20 class predictions. Class E was predicted thrice; Classes C & D were predicted once each.
+
+============================================================
+============================================================
+
+
+
+
+
+
+
+
