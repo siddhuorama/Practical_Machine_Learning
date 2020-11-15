@@ -1,7 +1,7 @@
 ---
 title: "Lifting Weights - Right And Wrong"
 author: "Siddharth Samant"
-date: "09/11/2020"
+date: "15/11/2020"
 output:
   prettydoc::html_pretty:
     theme: cayman
@@ -19,7 +19,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 
 ## Synopsis
 
-The objective of this assignment was to correctly classify the quality of a physical activity - performing barbell lifts - into one of 5 classes (A/B/C/D/E). We initially pre-processed the training set - this involved dealing with missing values, feature selection, data transformations to resolve skewness, and removal of highly correlated predictors. We then fit a range of machine learning models on one half of the training set, and validated their performance on the other half. We also fit two model ensembles which combined the best standalone models - one based on majority vote, and the other on maximum class probabilities. The majority vote model ensemble gave us the best performance, so we selected it as our final model. We then pre-processed the test set, fit our model to its 20 cases, and visualised the final predictions.
+The objective of this assignment was to correctly classify the quality of a physical activity - performing barbell lifts - into one of 5 classes (A/B/C/D/E). We initially pre-processed the training set - this involved dealing with missing values, feature selection, data transformations to resolve skewness, and removal of highly correlated predictors. We then fit a range of machine learning models on one half of the training set, and validated their performance on the other half. We also fit two model ensembles which combined the best standalone models - one based on majority vote, and the other on maximum class probabilities. The majority vote model ensemble gave us the best performance, so we selected it as our final model. We then pre-processed the test set, fit our model to its 20 cases, and looked at the final predictions.
 
 ============================================================
 ============================================================
@@ -28,15 +28,15 @@ The objective of this assignment was to correctly classify the quality of a phys
 
 A detailed synopsis of the data collection process is provided in the research paper [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf). We noted the following:
 
-1. **Sensors were mounted in users' glove, armband, lumbar belt, and dumbbell**
-2. For data recording, the researchers used Razor inertial measurement units (IMU), which provided **3-axes acceleration, gyroscope and magnetometer data**
-3. 6 Participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
-   * exactly according to the specification (Class A) 
-   * throwing the elbows to the front (Class B) 
-   * lifting the dumbbell only halfway (Class C)
-   * lowering the dumbbell only halfway (Class D)
-   * throwing the hips to the front (Class E)
-4. Class A corresponded to the specified execution of the exercise, while the other 4 classes corresponded to common mistakes
+1. 6 Participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+   * exactly according to the specification: **Class A** 
+   * throwing the elbows to the front: **Class B** 
+   * lifting the dumbbell only halfway: **Class C**
+   * lowering the dumbbell only halfway: **Class D**
+   * throwing the hips to the front: **Class E**
+2. Class A corresponded to the specified execution of the exercise, while the other 4 classes corresponded to common mistakes
+3. **Sensors were mounted in users' glove, armband, lumbar belt, and dumbbell**
+4. For data recording, the researchers used Razor inertial measurement units (IMU), which provided **3-axes acceleration, gyroscope and magnetometer data**
 5. **For feature extraction, the researchers used a sliding window approach with different lengths from 0.5 second to 2.5 seconds**, with 0.5 second overlap
 6. In each step of the sliding window approach, **they calculated features on the Euler angles - roll, pitch and yaw - as well as the raw accelerometer, gyroscope and magnetometer readings**
 7. For the Euler angles of each of the four sensors, they calculated eight features: **mean, variance, standard deviation, max, min, amplitude, kurtosis and skewness**, generating in total 96 derived feature sets
@@ -519,7 +519,7 @@ predDFProb <- data.frame(rfClass = rfPredVal,
                          rfProb = rfPredProb$rfMaxProb, 
                          bagProb = bagPredProb$bagMaxProb)
 
-#create a factor variable that records the prediction corresponding to the highest class probability
+#create a factor variable that records the prediction corresponding to the max. class probability
 predDFProb <- predDFProb %>%
         mutate(class = ifelse(rfProb >= bagProb, rfClass, bagClass)) %>%
         mutate(class = as.factor(ifelse(class == 1, "A", 
@@ -679,23 +679,25 @@ knnPredTest <- predict(knnFit, testDummyUsers1)
 
 #combine the 3 model predictions and determine the majority vote
 #create a data frame that combines the predictions of the 3 best models
-predDFTest <- data.frame(rfPredTest, bagPredTest, knnPredTest)
+#also add the problem_id column from the test set
+predDFTest <- data.frame(problem_id = testDummyUsers1$problem_id,
+        rfPredTest, bagPredTest, knnPredTest)
 
 #add a factor variable that contains the majority vote of the 3 model predictions
-majority = apply(predDFTest, 1, function(x) names(which.max(table(x))))
-predDFTest$majority  <- as.factor(majority)
+finalPrediction = apply(predDFTest, 1, function(x) names(which.max(table(x))))
+predDFTest$finalPrediction  <- as.factor(finalPrediction)
 ```
 
-Finally, we visualised the final class predictions for the test set.
+Finally, we looked at the final class predictions for the test set.
 
-```{r final_visualisation, fig.align="center"}
-#visualise the final class predictions for the test set
-ggplot(predDFTest, aes(majority)) +
-        geom_bar(colour = "black", fill = "salmon") +
-        labs(title = "Final Class Predictions for Test Set",
-             subtitle = "Class B & A make up 75% of predictions", 
-             x = "Class Prediction",
-             y = "Count")
+```{r final_table, fig.align="center"}
+#show the final class predictions
+knitr::kable(
+        predDFTest, 
+        align = "cc"
+) %>%
+        kable_styling(full_width = TRUE) %>%
+        column_spec(column = 5, bold = TRUE)
 ```
 
 Classes A & B accounted for 15 of the 20 class predictions. Class E was predicted thrice; Classes C & D were predicted once each.
