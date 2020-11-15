@@ -771,7 +771,7 @@ magnet_arm_z
 <li>The training set was centered and scaled before fitting each model</li>
 <li>Each model was tuned over 10 different values of its tuning parameters</li>
 <li>We used 10-fold cross validation as our resampling technique. This was because it balanced both model bias and variance (especially considering the large sample size), and because it was computationally efficient</li>
-<li>Each model was then assessed for its accuracy on the validation set, which contained the remaining 50% of the dataset</li>
+<li>Each model was then assessed for its accuracy on the validation set, which contained the remaining 50% of the dataset. The out-of-sample error rate was also calculated using this accuracy measure</li>
 </ol>
 <div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1"></a><span class="co">#partition the data basis the response</span></span>
 <span id="cb10-2"><a href="#cb10-2"></a>halfTrain &lt;-<span class="st"> </span><span class="kw">createDataPartition</span>(<span class="dt">y =</span> trDummyUsers2<span class="op">$</span>classe, <span class="dt">p =</span> <span class="fl">0.5</span>, </span>
@@ -832,7 +832,7 @@ magnet_arm_z
 ## $Accuracy
 ##       Accuracy  AccuracyLower  AccuracyUpper AccuracyPValue 
 ##          0.625          0.615          0.634          0.000</code></pre>
-<p>LDA provided an overall classification accuracy of only <strong>0.625</strong> on the validation set.</p>
+<p>LDA provided an overall classification accuracy of only <strong>0.625</strong> on the validation set. Thus, the <strong>out-of-sample error rate</strong> is <strong>0.375</strong>.</p>
 <hr />
 </div>
 <div id="bagged-trees" class="section level3">
@@ -867,7 +867,7 @@ magnet_arm_z
 ## $Accuracy
 ##       Accuracy  AccuracyLower  AccuracyUpper AccuracyPValue 
 ##          0.967          0.963          0.970          0.000</code></pre>
-<p>Bagging provided a high classification accuracy of <strong>0.967</strong> on the validation set.</p>
+<p>Bagging provided a high classification accuracy of <strong>0.967</strong> on the validation set. Thus, the <strong>out-of-sample error rate</strong> is <strong>0.033</strong>.</p>
 <hr />
 </div>
 <div id="naive-bayes" class="section level3">
@@ -902,7 +902,7 @@ magnet_arm_z
 ## $Accuracy
 ##       Accuracy  AccuracyLower  AccuracyUpper AccuracyPValue 
 ##          0.722          0.713          0.730          0.000</code></pre>
-<p>Naive Bayes provided an overall classification accuracy of only <strong>0.722</strong> on the validation set.</p>
+<p>Naive Bayes provided an overall classification accuracy of only <strong>0.722</strong> on the validation set. Thus, the <strong>out-of-sample error rate</strong> is <strong>0.278</strong>.</p>
 <hr />
 </div>
 <div id="random-forest" class="section level3">
@@ -938,7 +938,7 @@ magnet_arm_z
 ## $Accuracy
 ##       Accuracy  AccuracyLower  AccuracyUpper AccuracyPValue 
 ##          0.987          0.985          0.989          0.000</code></pre>
-<p>Random Forest provided a high classification accuracy of <strong>0.987</strong> on the validation set.</p>
+<p>Random Forest provided a high classification accuracy of <strong>0.987</strong> on the validation set. Thus, the <strong>out-of-sample error rate</strong> is <strong>0.013</strong>.</p>
 <hr />
 </div>
 <div id="k-nearest-neighbours-knn" class="section level3">
@@ -973,8 +973,8 @@ magnet_arm_z
 ## $Accuracy
 ##       Accuracy  AccuracyLower  AccuracyUpper AccuracyPValue 
 ##          0.977          0.974          0.980          0.000</code></pre>
-<p>KNN provided a high classification accuracy of <strong>0.977</strong> on the validation set.</p>
-<p>The following plot shows the comparison of the 5 models, in terms of their accuracy. <strong>Random Forest, K Nearest Neighbours and Bagging all had high accuracy</strong>, while Linear Discriminant Analysis and Naive Bayes were much less accurate.</p>
+<p>KNN provided a high classification accuracy of <strong>0.977</strong> on the validation set. Thus, the <strong>out-of-sample error rate</strong> is <strong>0.023</strong>.</p>
+<p>The following plot shows the comparison of the 5 models, in terms of their accuracy. <strong>Random Forest, K Nearest Neighbours and Bagging all had high accuracy</strong>, while <strong>Linear Discriminant Analysis and Naive Bayes were much less accurate</strong>.</p>
 <div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1"></a><span class="co">#save the prediction accuracy of each model as new objects</span></span>
 <span id="cb21-2"><a href="#cb21-2"></a>ldaCM &lt;-<span class="st"> </span><span class="kw">round</span>(<span class="kw">confusionMatrix</span>(ldaPredVal, trVal50<span class="op">$</span>classe)<span class="op">$</span>overall[<span class="kw">c</span>(<span class="dv">1</span>,<span class="dv">3</span>,<span class="dv">4</span>)],<span class="dv">4</span>)</span>
 <span id="cb21-3"><a href="#cb21-3"></a>bagCM &lt;-<span class="st"> </span><span class="kw">round</span>(<span class="kw">confusionMatrix</span>(bagPredVal, trVal50<span class="op">$</span>classe)<span class="op">$</span>overall[<span class="kw">c</span>(<span class="dv">1</span>,<span class="dv">3</span>,<span class="dv">4</span>)],<span class="dv">4</span>)</span>
@@ -1034,7 +1034,7 @@ magnet_arm_z
 ## $Accuracy
 ##       Accuracy  AccuracyLower  AccuracyUpper AccuracyPValue 
 ##          0.987          0.985          0.989          0.000</code></pre>
-<p>The model had an accuracy of <strong>0.987</strong> when tested on the validation set.</p>
+<p>The model had an accuracy of <strong>0.987</strong> when tested on the validation set. Thus, the <strong>out-of-sample error rate</strong> is <strong>0.013</strong>.</p>
 <hr />
 </div>
 <div id="maximum-class-probability-model" class="section level3">
@@ -1082,7 +1082,7 @@ magnet_arm_z
 ## $Accuracy
 ##       Accuracy  AccuracyLower  AccuracyUpper AccuracyPValue 
 ##          0.982          0.979          0.984          0.000</code></pre>
-<p>The model had an accuracy of <strong>0.982</strong> when tested on the validation set.</p>
+<p>The model had an accuracy of <strong>0.982</strong> when tested on the validation set. Thus, the <strong>out-of-sample error rate</strong> is <strong>0.018</strong>.</p>
 <hr />
 </div>
 <div id="final-model-selection" class="section level3">
